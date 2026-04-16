@@ -24,6 +24,8 @@ from equivalences import (
     electricity_lines,
     fmt_litres,
     fmt_wh,
+    hero_electricity,
+    hero_water,
     totals_to_wh,
     water_lines,
     wh_to_litres,
@@ -31,8 +33,6 @@ from equivalences import (
 
 
 CLAUDE_DIR = Path.home() / ".claude" / "projects"
-PROJECT_DIR = Path(__file__).resolve().parent
-SOURCES_PATH = PROJECT_DIR / "SOURCES.md"
 GITHUB_URL = "https://github.com/Connected-Mate/TokenWatt"
 REFRESH_SECONDS = 30
 
@@ -144,30 +144,52 @@ class TokenWattApp(rumps.App):
             print(f"TokenWatt error: {exc}")
             return
 
-        self.title = compact_title(stats["today_wh"]) if stats["today_wh"] > 0 else "🍟0  🚿0"
+        self.title = compact_title(stats["today_wh"]) if stats["today_wh"] > 0 else "TW …"
         self._rebuild_menu(stats)
 
-    def _block(self, label: str, wh: float, tokens: int, meta: str | None = None) -> list:
+    # --- top-level hero rows ------------------------------------------------
+
+    def _hero_block(self, label: str, wh: float) -> list:
         litres = wh_to_litres(wh)
-        rows: list = [_item(label)]
-        if meta:
-            rows.append(_item(f"   {meta}"))
-        rows += [
-            None,
-            _item(f"   🪙  {_fmt_tokens(tokens)} tokens"),
-            None,
-            _item(f"   ⚡  {fmt_wh(wh)}"),
+        return [
+            _item(label),
+            _item(f"     {hero_electricity(wh)}"),
+            _item(f"     {hero_water(litres)}"),
         ]
-        for txt in electricity_lines(wh):
-            rows.append(_item(f"      {txt}"))
-        rows.append(None)
-        rows.append(_item(f"   💧  {fmt_litres(litres)}"))
-        for txt in water_lines(litres):
-            rows.append(_item(f"      {txt}"))
-        return rows
+
+    # --- submenus -----------------------------------------------------------
+
+    def _details_submenu(self, stats: dict) -> rumps.MenuItem:
+        root = rumps.MenuItem("▸  Details")
+
+        def section(title: str, wh: float, tokens: int, meta: str | None):
+            root.add(_item(title))
+            if meta:
+                root.add(_item(f"     {meta}"))
+            root.add(_item(f"     🪙  {_fmt_tokens(tokens)} tokens"))
+            root.add(None)
+            litres = wh_to_litres(wh)
+            root.add(_item(f"     ⚡  {fmt_wh(wh)}"))
+            for txt in electricity_lines(wh):
+                root.add(_item(f"          {txt}"))
+            root.add(None)
+            root.add(_item(f"     💧  {fmt_litres(litres)}"))
+            for txt in water_lines(litres):
+                root.add(_item(f"          {txt}"))
+
+        today_iso = datetime.now(timezone.utc).date().isoformat()
+        section("📅  Today", stats["today_wh"], stats["today_tokens"], today_iso)
+        root.add(None)
+
+        if stats["first_day"] and stats["active_days"]:
+            meta = f"{stats['active_days']} active days  ·  since {stats['first_day'].isoformat()}"
+        else:
+            meta = None
+        section("📈  All time", stats["total_wh"], stats["total_tokens"], meta)
+        return root
 
     def _sources_submenu(self) -> rumps.MenuItem:
-        root = rumps.MenuItem("📖  Sources & methodology")
+        root = rumps.MenuItem("▸  Sources & methodology")
 
         def add(text: str) -> None:
             root.add(_item(text))
@@ -177,7 +199,7 @@ class TokenWattApp(rumps.App):
         add(f"     input  ·  {WH_INPUT} Wh")
         add(f"     cache creation  ·  {WH_CACHE_CREATE} Wh")
         add(f"     cache read  ·  {WH_CACHE_READ} Wh")
-        add(f"     ≈ 4 Wh per Claude Opus 400-token round-trip")
+        add("     ≈ 4 Wh per Claude Opus 400-token round-trip")
         root.add(None)
 
         add("💧  Water per kWh")
@@ -186,10 +208,10 @@ class TokenWattApp(rumps.App):
         root.add(None)
 
         add("🏠  Everyday references")
-        for icon, singular, _, cost in ELECTRICITY:
-            add(f"     {icon}  {singular}  ·  {cost} Wh")
-        for icon, singular, _, cost in WATER:
-            add(f"     {icon}  {singular}  ·  {cost} L")
+        for icon, sing, _, cost in ELECTRICITY:
+            add(f"     {icon}  {sing}  ·  {cost} Wh")
+        for icon, sing, _, cost in WATER:
+            add(f"     {icon}  {sing}  ·  {cost} L")
         root.add(None)
 
         add("📚  Papers & data")
@@ -199,38 +221,22 @@ class TokenWattApp(rumps.App):
         add("     IEA 2025  ·  Energy and AI")
         add("     ADEME  ·  household appliances & water")
         add("     EU Commission  ·  energy label")
-        add("     US DOE  ·  Energy Star database")
+        add("     US DOE  ·  Energy Star")
         return root
+
+    # --- main build ---------------------------------------------------------
 
     def _rebuild_menu(self, stats: dict) -> None:
         self.menu.clear()
-        today_iso = datetime.now(timezone.utc).date().isoformat()
-        items: list = self._block(
-            "📅  Today",
-            stats["today_wh"],
-            stats["today_tokens"],
-            meta=today_iso,
-        )
+        items: list = []
+        items += self._hero_block("📅  Today", stats["today_wh"])
         items.append(None)
-
-        first = stats["first_day"]
-        days = stats["active_days"]
-        if first and days:
-            meta = f"{days} active days  ·  since {first.isoformat()}"
-        elif days:
-            meta = f"{days} active days"
-        else:
-            meta = None
-        items += self._block(
-            "📈  All time",
-            stats["total_wh"],
-            stats["total_tokens"],
-            meta=meta,
-        )
+        items += self._hero_block("📈  All time", stats["total_wh"])
         items += [
             None,
+            self._details_submenu(stats),
             self._sources_submenu(),
-            rumps.MenuItem("🐙  Open repository on GitHub", callback=self._on_open_github),
+            rumps.MenuItem("🐙  GitHub", callback=self._on_open_github),
             None,
             rumps.MenuItem("↻  Refresh", callback=self._on_refresh),
             rumps.MenuItem("✕  Quit", callback=rumps.quit_application),

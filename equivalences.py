@@ -141,28 +141,39 @@ def water_lines(litres: float) -> list[str]:
     return [line(icon, s, p, litres / cost) for icon, s, p, cost in WATER]
 
 
-def compact_title(wh: float) -> str:
-    """Menu-bar title: the most 'central' unit for each category.
+def _best_unit(value: float, units: list[tuple]):
+    """Pick the unit whose count lands most naturally in [1, 30].
 
-    Uses airfryer (elec) and shower (water) as default references.
-    Falls back to smaller units if the count would be near zero.
+    Walks from biggest to smallest; returns the first unit with count >= 1.
+    If every unit yields count > 30 or < 1, falls back to the biggest one.
     """
-    litres = wh_to_litres(wh)
+    ordered = sorted(units, key=lambda u: u[3])  # small -> big
+    for icon, sing, plur, cost in reversed(ordered):
+        count = value / cost
+        if 1 <= count <= 30:
+            return icon, sing, plur, count
+    for icon, sing, plur, cost in reversed(ordered):
+        count = value / cost
+        if count >= 1:
+            return icon, sing, plur, count
+    icon, sing, plur, cost = ordered[0]
+    return icon, sing, plur, value / cost
 
-    # Electricity: airfryer if count >= 0.5, else toasts.
-    airfryer_count = wh / 500
-    if airfryer_count >= 0.5:
-        e_part = f"🍟{_fmt_count(airfryer_count)}"
-    else:
-        e_part = f"🍞{_fmt_count(wh / 40)}"
 
-    # Water: shower if count >= 0.2, else cooking pots, else bottles.
-    shower_count = litres / 80
-    if shower_count >= 0.2:
-        w_part = f"🚿{_fmt_count(shower_count)}"
-    elif litres / 2 >= 0.5:
-        w_part = f"🍳{_fmt_count(litres / 2)}"
-    else:
-        w_part = f"🍶{_fmt_count(litres / 0.5)}"
+def hero_electricity(wh: float) -> str:
+    icon, sing, plur, count = _best_unit(wh, ELECTRICITY)
+    label = sing if count < 1.5 else plur
+    return f"{icon}  {_fmt_count(count)} {label}"
 
-    return f"{e_part}  {w_part}"
+
+def hero_water(litres: float) -> str:
+    icon, sing, plur, count = _best_unit(litres, WATER)
+    label = sing if count < 1.5 else plur
+    return f"{icon}  {_fmt_count(count)} {label}"
+
+
+def compact_title(wh: float) -> str:
+    """Menu-bar title: the two most legible hero numbers."""
+    e_icon, _, _, e_count = _best_unit(wh, ELECTRICITY)
+    w_icon, _, _, w_count = _best_unit(wh_to_litres(wh), WATER)
+    return f"{e_icon} {_fmt_count(e_count)}  ·  {w_icon} {_fmt_count(w_count)}"
