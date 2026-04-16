@@ -13,6 +13,13 @@ from pathlib import Path
 import rumps
 
 from equivalences import (
+    ELECTRICITY,
+    WATER,
+    L_WATER_PER_KWH,
+    WH_CACHE_CREATE,
+    WH_CACHE_READ,
+    WH_INPUT,
+    WH_OUTPUT,
     compact_title,
     electricity_lines,
     fmt_litres,
@@ -21,7 +28,6 @@ from equivalences import (
     water_lines,
     wh_to_litres,
 )
-from view import write_sources_html
 
 
 CLAUDE_DIR = Path.home() / ".claude" / "projects"
@@ -107,38 +113,8 @@ class TokenWattApp(rumps.App):
     def _on_refresh(self, _sender) -> None:
         self._refresh()
 
-    def _on_open_sources(self, _sender) -> None:
-        try:
-            html_path = write_sources_html()
-            subprocess.Popen(["open", str(html_path)])
-        except Exception as exc:  # noqa: BLE001
-            print(f"Sources view failed: {exc}")
-            subprocess.Popen(["open", f"{GITHUB_URL}/blob/main/SOURCES.md"])
-
     def _on_open_github(self, _sender) -> None:
         subprocess.Popen(["open", GITHUB_URL])
-
-    def _on_about(self, _sender) -> None:
-        try:
-            choice = rumps.alert(
-                title="TokenWatt",
-                message=(
-                    "Your Claude Code tokens, shown as everyday electricity "
-                    "and water.\n\n"
-                    "Reads ~/.claude/projects/*.jsonl locally.\n"
-                    "No telemetry. No network calls.\n\n"
-                    "Every constant is peer-reviewed or from an official "
-                    "source — see Sources & methodology.\n\n"
-                    f"{GITHUB_URL}"
-                ),
-                ok="Open sources",
-                cancel="Close",
-            )
-            if choice == 1:
-                self._on_open_sources(_sender)
-        except Exception as exc:  # noqa: BLE001
-            print(f"About dialog failed: {exc}")
-            self._on_open_sources(_sender)
 
     def _refresh(self) -> None:
         try:
@@ -166,6 +142,42 @@ class TokenWattApp(rumps.App):
             rows.append(_item(f"      {txt}"))
         return rows
 
+    def _sources_submenu(self) -> rumps.MenuItem:
+        root = rumps.MenuItem("📖  Sources & methodology")
+
+        def add(m: rumps.MenuItem, text: str) -> None:
+            m.add(_item(text))
+
+        add(root, "⚡  Electricity per token (Wh)")
+        add(root, f"      output              {WH_OUTPUT}")
+        add(root, f"      input               {WH_INPUT}")
+        add(root, f"      cache creation      {WH_CACHE_CREATE}")
+        add(root, f"      cache read          {WH_CACHE_READ}")
+        add(root, "      Calibrated to Claude Opus ≈ 4 Wh / 400 tokens.")
+        root.add(None)
+
+        add(root, "💧  Water per kWh")
+        add(root, f"      {L_WATER_PER_KWH} L   (datacenter WUE,")
+        add(root,  "            cooling + power generation)")
+        root.add(None)
+
+        add(root, "🏠  Everyday units")
+        for icon, singular, _, cost in ELECTRICITY:
+            add(root, f"      {icon}  {singular:<18} {cost} Wh")
+        for icon, singular, _, cost in WATER:
+            add(root, f"      {icon}  {singular:<18} {cost} L")
+        root.add(None)
+
+        add(root, "📚  References")
+        add(root, "      arXiv:2505.09598  How Hungry is AI?")
+        add(root, "      arXiv:2304.03271  Making AI Less Thirsty")
+        add(root, "      arXiv:2204.05149  Carbon footprint of ML")
+        add(root, "      IEA 2025          Energy and AI")
+        add(root, "      ADEME             household appliances / water")
+        add(root, "      EU Commission     energy label")
+        add(root, "      US DOE            Energy Star database")
+        return root
+
     def _rebuild_menu(self, stats: dict) -> None:
         self.menu.clear()
         items: list = self._block("📅  Today", stats["today_wh"])
@@ -173,11 +185,10 @@ class TokenWattApp(rumps.App):
         items += self._block("📈  All time", stats["total_wh"])
         items += [
             None,
-            rumps.MenuItem("📖  Sources & methodology", callback=self._on_open_sources),
-            rumps.MenuItem("🐙  GitHub", callback=self._on_open_github),
+            self._sources_submenu(),
+            rumps.MenuItem("🐙  Open repository on GitHub", callback=self._on_open_github),
             None,
             rumps.MenuItem("↻  Refresh", callback=self._on_refresh),
-            rumps.MenuItem("ⓘ  About", callback=self._on_about),
             rumps.MenuItem("✕  Quit", callback=rumps.quit_application),
         ]
         self.menu = items
