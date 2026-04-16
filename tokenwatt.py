@@ -1,30 +1,34 @@
 #!/usr/bin/env python3
-"""TokenWatt - Claude Code tokens in electricity and water."""
+"""TokenWatt - Claude Code tokens, shown as electricity + water
+equivalents in the macOS menu bar.
+"""
 
 from __future__ import annotations
 
 import json
 import os
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
 import rumps
 
 from equivalences import (
-    bar,
+    ELECTRICITY,
+    WATER,
     compact_title,
-    electricity_headline,
     fmt_litres,
     fmt_wh,
-    pick_electricity,
-    pick_water,
+    headline,
     totals_to_wh,
-    water_headline,
     wh_to_litres,
 )
 
 
 CLAUDE_DIR = Path.home() / ".claude" / "projects"
+PROJECT_DIR = Path(__file__).resolve().parent
+SOURCES_PATH = PROJECT_DIR / "SOURCES.md"
+GITHUB_URL = "https://github.com/Connected-Mate/TokenWatt"
 REFRESH_SECONDS = 30
 
 
@@ -65,11 +69,10 @@ def collect_stats() -> dict:
                     if parsed is None:
                         continue
                     inp, out, cc, cr, ts = parsed
-                    for bucket in (totals,):
-                        bucket["input"] += inp
-                        bucket["output"] += out
-                        bucket["cache_create"] += cc
-                        bucket["cache_read"] += cr
+                    totals["input"] += inp
+                    totals["output"] += out
+                    totals["cache_create"] += cc
+                    totals["cache_read"] += cr
                     if ts:
                         try:
                             day = datetime.fromisoformat(ts.replace("Z", "+00:00")).date()
@@ -105,15 +108,34 @@ class TokenWattApp(rumps.App):
     def _on_refresh(self, _sender) -> None:
         self._refresh()
 
+    def _on_open_sources(self, _sender) -> None:
+        if SOURCES_PATH.exists():
+            subprocess.Popen(["open", str(SOURCES_PATH)])
+        else:
+            subprocess.Popen(["open", f"{GITHUB_URL}/blob/main/SOURCES.md"])
+
+    def _on_open_github(self, _sender) -> None:
+        subprocess.Popen(["open", GITHUB_URL])
+
     def _on_about(self, _sender) -> None:
-        rumps.alert(
-            title="TokenWatt",
-            message=(
-                "Your Claude Code tokens, in electricity and water.\n\n"
-                "Simple, local, open source.\n"
-                "github.com/Connected-Mate/TokenWatt"
-            ),
-        )
+        try:
+            choice = rumps.alert(
+                title="TokenWatt",
+                message=(
+                    "Your Claude Code tokens, shown as electricity and water.\n\n"
+                    "Reads ~/.claude/projects/*.jsonl locally.\n"
+                    "No telemetry. No network calls.\n\n"
+                    "Every constant is sourced (SOURCES.md).\n\n"
+                    f"{GITHUB_URL}"
+                ),
+                ok="Open sources",
+                cancel="Close",
+            )
+            if choice == 1:
+                self._on_open_sources(_sender)
+        except Exception as exc:  # noqa: BLE001
+            print(f"About dialog failed: {exc}")
+            self._on_open_sources(_sender)
 
     def _refresh(self) -> None:
         try:
@@ -123,25 +145,28 @@ class TokenWattApp(rumps.App):
             print(f"TokenWatt error: {exc}")
             return
 
-        self.title = compact_title(stats["today_wh"]) if stats["today_wh"] > 0 else "⚡0  💧0"
+        self.title = compact_title(stats["today_wh"]) if stats["today_wh"] > 0 else "💡0  🥛0"
         self._rebuild_menu(stats)
 
     def _block(self, label: str, wh: float) -> list:
         litres = wh_to_litres(wh)
-        e_icon, _, e_count = pick_electricity(wh)
-        w_icon, _, w_count = pick_water(litres)
+        e_text, e_visual = headline(wh, ELECTRICITY)
+        w_text, w_visual = headline(litres, WATER)
 
-        return [
+        rows = [
             _item(label),
             None,
             _item(f"   ⚡  {fmt_wh(wh)}"),
-            _item(f"   {electricity_headline(wh)}"),
-            _item(f"      {bar(e_icon, e_count)}") if e_count >= 1 else _item(""),
-            None,
-            _item(f"   💧  {fmt_litres(litres)}"),
-            _item(f"   {water_headline(litres)}"),
-            _item(f"      {bar(w_icon, w_count)}") if w_count >= 1 else _item(""),
+            _item(f"   =  {e_text}"),
         ]
+        if e_visual:
+            rows.append(_item(f"       {e_visual}"))
+        rows.append(None)
+        rows.append(_item(f"   💧  {fmt_litres(litres)}"))
+        rows.append(_item(f"   =  {w_text}"))
+        if w_visual:
+            rows.append(_item(f"       {w_visual}"))
+        return rows
 
     def _rebuild_menu(self, stats: dict) -> None:
         self.menu.clear()
@@ -150,7 +175,8 @@ class TokenWattApp(rumps.App):
         items += self._block("📈  All time", stats["total_wh"])
         items += [
             None,
-            _item("🌍  A drop of water, a drop of power — per token."),
+            rumps.MenuItem("📖  Sources & methodology", callback=self._on_open_sources),
+            rumps.MenuItem("🐙  GitHub", callback=self._on_open_github),
             None,
             rumps.MenuItem("↻  Refresh", callback=self._on_refresh),
             rumps.MenuItem("ⓘ  About", callback=self._on_about),
