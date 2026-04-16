@@ -1,15 +1,7 @@
-"""Energy conversions between Claude tokens, money, CO2, and appliances.
+"""Tokens -> electricity and water, with a few everyday comparisons.
 
-All figures are approximations. Sources documented in README.md.
-
-Not all tokens cost the same energy:
-- Output tokens are by far the most expensive (autoregressive generation).
-- Input / cache-creation tokens are a prefill pass - much cheaper per token.
-- Cache-read tokens are served from a KV cache - roughly an order of
-  magnitude cheaper than a fresh input token.
-
-Defaults (Wh/token) are calibrated so that a typical Claude 3 Opus
-400-token round-trip lands near the published ~4 Wh figure.
+Defaults are approximate. Override any of them via environment variables.
+Sources in README.md.
 """
 
 from __future__ import annotations
@@ -24,31 +16,34 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
-WH_PER_OUTPUT_TOKEN = _env_float("TOKENWATT_WH_OUTPUT", 0.005)
-WH_PER_INPUT_TOKEN = _env_float("TOKENWATT_WH_INPUT", 0.0003)
-WH_PER_CACHE_CREATE_TOKEN = _env_float("TOKENWATT_WH_CACHE_CREATE", 0.0003)
-WH_PER_CACHE_READ_TOKEN = _env_float("TOKENWATT_WH_CACHE_READ", 0.00003)
+# Electricity per token (Wh). Output tokens are ~10x input / cache-create,
+# cache reads are ~10x cheaper again.
+WH_OUTPUT = _env_float("TOKENWATT_WH_OUTPUT", 0.005)
+WH_INPUT = _env_float("TOKENWATT_WH_INPUT", 0.0003)
+WH_CACHE_CREATE = _env_float("TOKENWATT_WH_CACHE_CREATE", 0.0003)
+WH_CACHE_READ = _env_float("TOKENWATT_WH_CACHE_READ", 0.00003)
 
-# Retail electricity price (France regulated tariff, 2026 ~0.25 €/kWh).
-EUR_PER_KWH = _env_float("TOKENWATT_EUR_PER_KWH", 0.25)
-# French grid carbon intensity (~60 gCO2eq/kWh, RTE 2024 average).
-G_CO2_PER_KWH = _env_float("TOKENWATT_GCO2_PER_KWH", 60.0)
+# Water usage effectiveness: litres of water per kWh of datacenter energy
+# (cooling + power generation). ~1.5 L/kWh is a common US-average figure.
+L_WATER_PER_KWH = _env_float("TOKENWATT_L_WATER_PER_KWH", 1.5)
 
 
-# (key, icon, singular, plural, Wh per use). Ordered small -> big so the
-# headline pick can prefer the largest appliance that still registers >= 1.
-APPLIANCES = [
-    ("toast",     "🍞", "toast",             "toasts",             40),
-    ("kettle",    "☕", "kettle cup",        "kettle cups",        100),
-    ("phone",     "📱", "phone charge",      "phone charges",      15),
-    ("bulb",      "💡", "LED hour (10 W)",   "LED hours (10 W)",   10),
-    ("macbook",   "💻", "MacBook hour",      "MacBook hours",      30),
-    ("microwave", "🍲", "microwave (5 min)", "microwaves (5 min)", 150),
-    ("airfryer",  "🍟", "airfryer run",      "airfryer runs",      500),
-    ("washer",    "🧺", "washing cycle",     "washing cycles",     800),
+# Electricity equivalents: (icon, label, Wh per use). Ordered small -> big.
+ELECTRICITY = [
+    ("🍞", "toast",            40),
+    ("📱", "phone charge",     15),
+    ("💡", "LED hour",         10),
+    ("🍟", "airfryer run",     500),
+    ("🧺", "washing cycle",    800),
 ]
 
-HEADLINE_KEYS = ("airfryer", "washer", "toast", "phone")
+# Water equivalents: (icon, label, L per use).
+WATER = [
+    ("🍶", "water bottle",     0.5),
+    ("🥛", "glass of water",   0.25),
+    ("🚿", "shower",           80),
+    ("🛁", "bathtub",          150),
+]
 
 
 def tokens_to_wh(
@@ -58,10 +53,10 @@ def tokens_to_wh(
     cache_read: int = 0,
 ) -> float:
     return (
-        input_tokens * WH_PER_INPUT_TOKEN
-        + output_tokens * WH_PER_OUTPUT_TOKEN
-        + cache_creation * WH_PER_CACHE_CREATE_TOKEN
-        + cache_read * WH_PER_CACHE_READ_TOKEN
+        input_tokens * WH_INPUT
+        + output_tokens * WH_OUTPUT
+        + cache_creation * WH_CACHE_CREATE
+        + cache_read * WH_CACHE_READ
     )
 
 
@@ -74,139 +69,81 @@ def totals_to_wh(totals: dict) -> float:
     )
 
 
-def wh_to_eur(wh: float) -> float:
-    return (wh / 1000.0) * EUR_PER_KWH
+def wh_to_litres(wh: float) -> float:
+    return (wh / 1000.0) * L_WATER_PER_KWH
 
 
-def wh_to_g_co2(wh: float) -> float:
-    return (wh / 1000.0) * G_CO2_PER_KWH
-
-
-def _fmt_count(n: float) -> str:
+def _fmt_num(n: float) -> str:
     if n >= 1000:
         return f"{n:,.0f}"
     if n >= 100:
         return f"{n:,.0f}"
     if n >= 10:
-        return f"{n:.1f}"
+        return f"{n:.0f}"
     if n >= 1:
         return f"{n:.1f}"
     return f"{n:.2f}"
 
 
-def _fmt_line(icon: str, n: float, singular: str, plural: str) -> str:
-    label = singular if 0.5 <= n < 1.5 else plural
-    return f"{icon}  {_fmt_count(n)} {label}"
+def fmt_wh(wh: float) -> str:
+    if wh >= 1000:
+        return f"{wh/1000:.1f} kWh"
+    return f"{wh:.0f} Wh"
 
 
-def fmt_eur(wh: float) -> str:
-    eur = wh_to_eur(wh)
-    if eur >= 10:
-        return f"€{eur:,.2f}"
-    if eur >= 1:
-        return f"€{eur:.2f}"
-    if eur >= 0.01:
-        return f"€{eur:.3f}"
-    return f"{eur*100:.2f} c"
+def fmt_litres(litres: float) -> str:
+    if litres >= 1000:
+        return f"{litres/1000:.1f} m³"
+    if litres >= 1:
+        return f"{litres:.1f} L"
+    return f"{litres*1000:.0f} mL"
 
 
-def fmt_co2(wh: float) -> str:
-    g = wh_to_g_co2(wh)
-    if g >= 1000:
-        return f"{g/1000:.2f} kg CO₂"
-    if g >= 10:
-        return f"{g:.0f} g CO₂"
-    return f"{g:.1f} g CO₂"
-
-
-def headline_pick(wh: float) -> tuple[str, str, float]:
-    """Single most readable equivalent — largest appliance still >= 1."""
-    for key, icon, singular, plural, cost in reversed(APPLIANCES):
+def pick_electricity(wh: float) -> tuple[str, str, float]:
+    """Pick the biggest electricity equivalent with count >= 1."""
+    for icon, label, cost in reversed(ELECTRICITY):
         count = wh / cost
         if count >= 1:
-            label = singular if count < 1.5 else plural
-            return icon, f"{icon} {_fmt_count(count)} {label}", count
-    key, icon, singular, plural, cost = APPLIANCES[0]
-    count = wh / cost
-    return icon, f"{icon} {_fmt_count(count)} {plural}", count
+            return icon, label, count
+    icon, label, cost = ELECTRICITY[0]
+    return icon, label, wh / cost
 
 
-def headline_compact(wh: float) -> str:
-    """Shorter form for the menu-bar title (icon + count only)."""
-    for key, icon, singular, plural, cost in reversed(APPLIANCES):
-        count = wh / cost
+def pick_water(litres: float) -> tuple[str, str, float]:
+    """Pick the biggest water equivalent with count >= 1."""
+    candidates = sorted(WATER, key=lambda x: x[2])
+    for icon, label, cost in reversed(candidates):
+        count = litres / cost
         if count >= 1:
-            return f"{icon} {_fmt_count(count)}"
-    key, icon, singular, plural, cost = APPLIANCES[0]
-    return f"{icon} {_fmt_count(wh / cost)}"
+            return icon, label, count
+    icon, label, cost = candidates[0]
+    return icon, label, litres / cost
 
 
-def headline_bar(wh: float, max_width: int = 20) -> str:
-    """Visual emoji bar matching the headline pick, clamped to max_width."""
-    icon, _, count = headline_pick(wh)
-    if count <= 0:
-        return ""
+def electricity_headline(wh: float) -> str:
+    icon, label, count = pick_electricity(wh)
+    plural = "" if 0.5 <= count < 1.5 else "s"
+    return f"{icon}  {_fmt_num(count)} {label}{plural}"
+
+
+def water_headline(litres: float) -> str:
+    icon, label, count = pick_water(litres)
+    plural = "" if 0.5 <= count < 1.5 else "s"
+    return f"{icon}  {_fmt_num(count)} {label}{plural}"
+
+
+def compact_title(wh: float) -> str:
+    """Short menu-bar title: electricity + water icons with counts."""
+    e_icon, _, e_count = pick_electricity(wh)
+    w_icon, _, w_count = pick_water(wh_to_litres(wh))
+    return f"{e_icon}{_fmt_num(e_count)}  {w_icon}{_fmt_num(w_count)}"
+
+
+# Visual bars — one emoji per unit, capped.
+def bar(icon: str, count: float, width: int = 10) -> str:
     whole = int(count)
-    if whole >= max_width:
-        return icon * max_width + f"… ({_fmt_count(count)})"
-    fractional = count - whole
-    bar = icon * whole
-    if fractional >= 0.5:
-        bar += "▏"
-    return bar
-
-
-def headline_lines(wh: float) -> list[str]:
-    return [
-        _fmt_line(icon, wh / cost, singular, plural)
-        for key, icon, singular, plural, cost in APPLIANCES
-        if key in HEADLINE_KEYS
-    ]
-
-
-def other_lines(wh: float) -> list[str]:
-    return [
-        _fmt_line(icon, wh / cost, singular, plural)
-        for key, icon, singular, plural, cost in APPLIANCES
-        if key not in HEADLINE_KEYS
-    ]
-
-
-# Gentle, half-serious nudges shown at the bottom of the menu. The tone is:
-# the planet is drying up, you are burning tokens anyway, hopefully what
-# you're building is worth the candle.
-FOOTER_MESSAGES = [
-    "🌍 The planet is drying up a little with every token. Hope what you're building is worth the candle.",
-    "🌵 Earth gets a little more arid. We keep consuming. May your build be worth it.",
-    "🔥 Every token warms the planet a notch. Hope your code is worth the heat.",
-    "🏜️ The climate clock ticks. We tokenize anyway. Let's at least ship something great.",
-    "💧 One less drop in the aquifer, one more prompt in the log. Worth it?",
-    "🌡️ +0.000001 °C to the atmosphere. Hope this prompt was worth more than a toast.",
-    "🪫 Planet's battery is low. Build something that matters with the tokens you just spent.",
-    "🌾 Fields crack, glaciers retreat, tokens flow. May your craft be worth the candle.",
-    "☀️ Another megawatt of sunshine spent on LLM math. Make it count.",
-    "🐝 Bees are tired. LLMs are not. Let's hope the thing you shipped matters.",
-]
-
-
-def footer_message() -> str:
-    import random
-    return random.choice(FOOTER_MESSAGES)
-
-
-# Unicode block characters for a sparkline.
-_SPARK_BLOCKS = " ▁▂▃▄▅▆▇█"
-
-
-def sparkline(values: list[float]) -> str:
-    if not values:
+    if whole <= 0:
         return ""
-    peak = max(values)
-    if peak <= 0:
-        return _SPARK_BLOCKS[0] * len(values)
-    out = []
-    for v in values:
-        ratio = max(0.0, v / peak)
-        idx = min(len(_SPARK_BLOCKS) - 1, int(round(ratio * (len(_SPARK_BLOCKS) - 1))))
-        out.append(_SPARK_BLOCKS[idx])
-    return "".join(out)
+    if whole >= width:
+        return icon * width + "…"
+    return icon * whole
