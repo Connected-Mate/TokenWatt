@@ -21,6 +21,7 @@ from equivalences import (
     water_lines,
     wh_to_litres,
 )
+from view import write_sources_html
 
 
 CLAUDE_DIR = Path.home() / ".claude" / "projects"
@@ -107,9 +108,11 @@ class TokenWattApp(rumps.App):
         self._refresh()
 
     def _on_open_sources(self, _sender) -> None:
-        if SOURCES_PATH.exists():
-            subprocess.Popen(["open", str(SOURCES_PATH)])
-        else:
+        try:
+            html_path = write_sources_html()
+            subprocess.Popen(["open", str(html_path)])
+        except Exception as exc:  # noqa: BLE001
+            print(f"Sources view failed: {exc}")
             subprocess.Popen(["open", f"{GITHUB_URL}/blob/main/SOURCES.md"])
 
     def _on_open_github(self, _sender) -> None:
