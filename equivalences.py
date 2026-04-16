@@ -172,6 +172,28 @@ def other_lines(wh: float) -> list[str]:
     ]
 
 
+# Gentle, half-serious nudges shown at the bottom of the menu. The tone is:
+# the planet is drying up, you are burning tokens anyway, hopefully what
+# you're building is worth the candle.
+FOOTER_MESSAGES = [
+    "🌍 The planet is drying up a little with every token. Hope what you're building is worth the candle.",
+    "🌵 Earth gets a little more arid. We keep consuming. May your build be worth it.",
+    "🔥 Every token warms the planet a notch. Hope your code is worth the heat.",
+    "🏜️ The climate clock ticks. We tokenize anyway. Let's at least ship something great.",
+    "💧 One less drop in the aquifer, one more prompt in the log. Worth it?",
+    "🌡️ +0.000001 °C to the atmosphere. Hope this prompt was worth more than a toast.",
+    "🪫 Planet's battery is low. Build something that matters with the tokens you just spent.",
+    "🌾 Fields crack, glaciers retreat, tokens flow. May your craft be worth the candle.",
+    "☀️ Another megawatt of sunshine spent on LLM math. Make it count.",
+    "🐝 Bees are tired. LLMs are not. Let's hope the thing you shipped matters.",
+]
+
+
+def footer_message() -> str:
+    import random
+    return random.choice(FOOTER_MESSAGES)
+
+
 # Unicode block characters for a sparkline.
 _SPARK_BLOCKS = " ▁▂▃▄▅▆▇█"
 

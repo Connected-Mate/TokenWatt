@@ -16,6 +16,7 @@ import rumps
 from equivalences import (
     fmt_co2,
     fmt_eur,
+    footer_message,
     headline_bar,
     headline_compact,
     headline_lines,
@@ -254,6 +255,8 @@ class TokenWattApp(rumps.App):
         items.append(more_total)
 
         items += [
+            None,
+            _header(footer_message()),
             None,
             rumps.MenuItem("↻  Refresh", callback=self._on_refresh),
             rumps.MenuItem("📂  Open Claude logs folder", callback=self._on_open_dir),
