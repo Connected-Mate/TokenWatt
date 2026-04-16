@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
-"""TokenWatt - Claude Code token usage in menu bar, compared to toasters.
-
-Reads ~/.claude/projects/**/*.jsonl, aggregates token usage, converts to
-energy and shows household-appliance equivalents in the macOS menu bar.
+"""TokenWatt - Claude Code token usage in the macOS menu bar,
+expressed in household-appliance units.
 """
 
 from __future__ import annotations
@@ -14,7 +12,12 @@ from pathlib import Path
 
 import rumps
 
-from equivalences import format_equivalents, totals_to_wh
+from equivalences import (
+    headline_lines,
+    headline_pick,
+    other_lines,
+    totals_to_wh,
+)
 
 
 CLAUDE_DIR = Path.home() / ".claude" / "projects"
@@ -27,12 +30,13 @@ def _iter_jsonl_files() -> list[Path]:
     return list(CLAUDE_DIR.rglob("*.jsonl"))
 
 
-def _parse_usage(line: str) -> tuple[int, int, int, int, str | None] | None:
+def _parse_usage(line: str):
     try:
         d = json.loads(line)
     except json.JSONDecodeError:
         return None
-    usage = d.get("message", {}).get("usage") if isinstance(d.get("message"), dict) else None
+    msg = d.get("message")
+    usage = msg.get("usage") if isinstance(msg, dict) else None
     if not usage:
         return None
     return (
@@ -84,7 +88,9 @@ def collect_stats() -> dict:
     }
 
 
-def _fmt(n: int) -> str:
+def _fmt_tokens(n: int) -> str:
+    if n >= 1_000_000_000:
+        return f"{n/1_000_000_000:.1f}B"
     if n >= 1_000_000:
         return f"{n/1_000_000:.1f}M"
     if n >= 1_000:
@@ -92,9 +98,19 @@ def _fmt(n: int) -> str:
     return str(n)
 
 
+def _fmt_wh(wh: float) -> str:
+    if wh >= 1000:
+        return f"{wh/1000:.2f} kWh"
+    return f"{wh:.1f} Wh"
+
+
+def _header(text: str) -> rumps.MenuItem:
+    return rumps.MenuItem(text, callback=None)
+
+
 class TokenWattApp(rumps.App):
     def __init__(self) -> None:
-        super().__init__("TokenWatt", title="TW --", quit_button=None)
+        super().__init__("TokenWatt", title="TW …", quit_button=None)
         self._refresh()
 
     @rumps.timer(REFRESH_SECONDS)
@@ -111,11 +127,12 @@ class TokenWattApp(rumps.App):
         rumps.alert(
             title="TokenWatt",
             message=(
-                "Mesure ta consommation de tokens Claude Code et compare-la a "
-                "des appareils du quotidien (grille-pain, airfryer, machine a "
-                "laver, bouilloire, LED).\n\n"
-                "Open source - MIT License.\n"
-                "Patrick Code - powered by TGV Europe."
+                "Your Claude Code token usage, in kitchen-appliance units.\n\n"
+                "Tokens are read from ~/.claude/projects/*.jsonl, converted to\n"
+                "watt-hours using per-type weights, and compared to toasts,\n"
+                "airfryer runs, washing cycles, phone charges, and more.\n\n"
+                "Open source — MIT License.\n"
+                "github.com/Connected-Mate/TokenWatt"
             ),
         )
 
@@ -127,53 +144,56 @@ class TokenWattApp(rumps.App):
             print(f"TokenWatt error: {exc}")
             return
 
-        today_tokens = stats["today_tokens"]
         today_wh = stats["today_wh"]
-        self.title = f"TW {_fmt(today_tokens)} ({today_wh:.1f}Wh)"
+        _, headline, _ = headline_pick(today_wh)
+        self.title = headline if today_wh > 0 else "TW idle"
         self._rebuild_menu(stats)
 
     def _rebuild_menu(self, stats: dict) -> None:
         self.menu.clear()
 
-        def token_line(totals: dict) -> str:
-            cache = totals["cache_create"] + totals["cache_read"]
-            return (
-                f"  tokens: {_fmt(sum(totals.values()))}   "
-                f"(in {_fmt(totals['input'])} / "
-                f"out {_fmt(totals['output'])} / "
-                f"cache {_fmt(cache)})"
-            )
+        today_tokens = stats["today_tokens"]
+        today_wh = stats["today_wh"]
+        total_tokens = stats["total_tokens"]
+        total_wh = stats["total_wh"]
+
+        _, today_hero, _ = headline_pick(today_wh)
+        _, total_hero, _ = headline_pick(total_wh)
 
         items: list = [
-            rumps.MenuItem("Aujourd'hui", callback=None),
-            rumps.MenuItem(token_line(stats["today_totals"]), callback=None),
-            rumps.MenuItem(f"  energie: {stats['today_wh']:.2f} Wh", callback=None),
+            _header(f"📅  Today  —  {_fmt_tokens(today_tokens)} tokens · {_fmt_wh(today_wh)}"),
+            _header(f"   {today_hero}"),
             None,
         ]
-        for line in format_equivalents(stats["today_wh"]):
-            items.append(rumps.MenuItem(f"  {line}", callback=None))
+        for line in headline_lines(today_wh):
+            items.append(_header(f"   {line}"))
+
+        more_today = rumps.MenuItem("   More equivalents ▸")
+        for line in other_lines(today_wh):
+            more_today.add(rumps.MenuItem(line, callback=None))
+        items.append(more_today)
 
         items += [
             None,
-            rumps.MenuItem("Total (historique)", callback=None),
-            rumps.MenuItem(token_line(stats["totals"]), callback=None),
-            rumps.MenuItem(
-                f"  energie: {stats['total_wh']:.2f} Wh "
-                f"({stats['total_wh']/1000:.3f} kWh)",
-                callback=None,
-            ),
+            _header(f"📈  All time  —  {_fmt_tokens(total_tokens)} tokens · {_fmt_wh(total_wh)}"),
+            _header(f"   {total_hero}"),
             None,
         ]
-        for line in format_equivalents(stats["total_wh"], prefix="historique"):
-            items.append(rumps.MenuItem(f"  {line}", callback=None))
+        for line in headline_lines(total_wh):
+            items.append(_header(f"   {line}"))
+
+        more_total = rumps.MenuItem("   More equivalents ▸")
+        for line in other_lines(total_wh):
+            more_total.add(rumps.MenuItem(line, callback=None))
+        items.append(more_total)
 
         items += [
             None,
-            rumps.MenuItem("Refresh", callback=self._on_refresh),
-            rumps.MenuItem("Open ~/.claude/projects", callback=self._on_open_dir),
+            rumps.MenuItem("↻  Refresh", callback=self._on_refresh),
+            rumps.MenuItem("📂  Open Claude logs folder", callback=self._on_open_dir),
             None,
-            rumps.MenuItem("About", callback=self._on_about),
-            rumps.MenuItem("Quit", callback=rumps.quit_application),
+            rumps.MenuItem("ⓘ  About TokenWatt", callback=self._on_about),
+            rumps.MenuItem("✕  Quit", callback=rumps.quit_application),
         ]
         self.menu = items
 

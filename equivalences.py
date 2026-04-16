@@ -24,26 +24,28 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
-# Wh per token, by type. Override any via env var.
 WH_PER_OUTPUT_TOKEN = _env_float("TOKENWATT_WH_OUTPUT", 0.005)
 WH_PER_INPUT_TOKEN = _env_float("TOKENWATT_WH_INPUT", 0.0003)
 WH_PER_CACHE_CREATE_TOKEN = _env_float("TOKENWATT_WH_CACHE_CREATE", 0.0003)
 WH_PER_CACHE_READ_TOKEN = _env_float("TOKENWATT_WH_CACHE_READ", 0.00003)
 
 
-# Appliance energy costs (Wh per "use"). Conservative averages from French
-# energy-supplier guides (Alpiq, Hellowatt, Otovo, Moulinex) cross-checked
-# against EU class-A spec sheets.
-APPLIANCES = {
-    "toast_grille_pain": 40,        # 1 tranche, ~2 min @ 1200 W
-    "tasse_bouilloire": 100,        # 1 tasse 250 mL, chauffage a 90 degres
-    "cycle_airfryer": 500,          # 20 min @ 1500 W (500 g frites surgelees)
-    "cuisson_micro_ondes": 150,     # 5 min @ 1800 W
-    "cycle_machine_laver": 800,     # 1 cycle 40 degres, classe A
-    "heure_LED_10W": 10,            # 1 h ampoule LED 10 W
-    "heure_MacBook": 30,            # 1 h MacBook Pro en charge ~30 W
-    "smartphone_charge": 15,        # 1 charge complete iPhone ~15 Wh
-}
+# (key, icon, singular, plural, Wh per use). Ordered from small to big so
+# the "headline" pick can prefer the largest appliance that still registers
+# at >= 1.
+APPLIANCES = [
+    ("toast",     "🍞", "toast",            "toasts",            40),
+    ("kettle",    "☕", "kettle cup",       "kettle cups",       100),
+    ("phone",     "📱", "phone charge",     "phone charges",     15),
+    ("bulb",      "💡", "LED hour (10 W)",  "LED hours (10 W)",  10),
+    ("macbook",   "💻", "MacBook hour",     "MacBook hours",     30),
+    ("microwave", "🍲", "microwave (5 min)", "microwaves (5 min)", 150),
+    ("airfryer",  "🍟", "airfryer run",     "airfryer runs",     500),
+    ("washer",    "🧺", "washing cycle",    "washing cycles",    800),
+]
+
+# Small subset we always show. Rest goes into the "More equivalents" submenu.
+HEADLINE_KEYS = ("airfryer", "washer", "toast", "phone")
 
 
 def tokens_to_wh(
@@ -52,7 +54,6 @@ def tokens_to_wh(
     cache_creation: int = 0,
     cache_read: int = 0,
 ) -> float:
-    """Convert a per-type token breakdown to watt-hours."""
     return (
         input_tokens * WH_PER_INPUT_TOKEN
         + output_tokens * WH_PER_OUTPUT_TOKEN
@@ -62,7 +63,6 @@ def tokens_to_wh(
 
 
 def totals_to_wh(totals: dict) -> float:
-    """Convert a {input, output, cache_create, cache_read} dict to Wh."""
     return tokens_to_wh(
         input_tokens=totals.get("input", 0),
         output_tokens=totals.get("output", 0),
@@ -71,32 +71,50 @@ def totals_to_wh(totals: dict) -> float:
     )
 
 
-def equivalents(wh: float) -> dict[str, float]:
-    """How many of each appliance-use does `wh` represent?"""
-    return {name: wh / cost for name, cost in APPLIANCES.items()}
+def _fmt_count(n: float) -> str:
+    if n >= 100:
+        return f"{n:,.0f}".replace(",", ",")
+    if n >= 10:
+        return f"{n:,.1f}".replace(",", ",")
+    if n >= 1:
+        return f"{n:.1f}"
+    return f"{n:.2f}"
 
 
-def format_equivalents(wh: float, prefix: str | None = None) -> list[str]:
-    eq = equivalents(wh)
+def _fmt_line(icon: str, n: float, singular: str, plural: str) -> str:
+    label = singular if 0.5 <= n < 1.5 else plural
+    return f"{icon}  {_fmt_count(n)} {label}"
 
-    def line(label: str, key: str, icon: str) -> str:
-        n = eq[key]
-        if n >= 1:
-            num = f"{n:,.1f}".replace(",", " ")
-        else:
-            num = f"{n:.3f}"
-        return f"{icon}  {num} x {label}"
 
-    rows = [
-        line("toast grille-pain", "toast_grille_pain", "[toast]"),
-        line("tasses bouilloire", "tasse_bouilloire", "[tea]"),
-        line("charges smartphone", "smartphone_charge", "[phone]"),
-        line("heures LED 10 W", "heure_LED_10W", "[bulb]"),
-        line("heures MacBook", "heure_MacBook", "[mac]"),
-        line("cuissons micro-ondes 5 min", "cuisson_micro_ondes", "[mwave]"),
-        line("cycles airfryer 20 min", "cycle_airfryer", "[fry]"),
-        line("cycles machine a laver", "cycle_machine_laver", "[wash]"),
-    ]
-    if prefix:
-        rows = [f"[{prefix}] {r}" for r in rows]
-    return rows
+def headline_pick(wh: float) -> tuple[str, str, float]:
+    """Pick the single most readable equivalent — the biggest unit that is >= 1.
+
+    Returns (icon, formatted text, count).
+    """
+    for key, icon, singular, plural, cost in reversed(APPLIANCES):
+        count = wh / cost
+        if count >= 1:
+            label = singular if count < 1.5 else plural
+            return icon, f"{icon} {_fmt_count(count)} {label}", count
+    # Fallback: smallest unit
+    key, icon, singular, plural, cost = APPLIANCES[0]
+    count = wh / cost
+    return icon, f"{icon} {_fmt_count(count)} {plural}", count
+
+
+def headline_lines(wh: float) -> list[str]:
+    """The 4 key equivalents, always shown."""
+    lines = []
+    for key, icon, singular, plural, cost in APPLIANCES:
+        if key in HEADLINE_KEYS:
+            lines.append(_fmt_line(icon, wh / cost, singular, plural))
+    return lines
+
+
+def other_lines(wh: float) -> list[str]:
+    """The remaining equivalents for the submenu."""
+    lines = []
+    for key, icon, singular, plural, cost in APPLIANCES:
+        if key not in HEADLINE_KEYS:
+            lines.append(_fmt_line(icon, wh / cost, singular, plural))
+    return lines
