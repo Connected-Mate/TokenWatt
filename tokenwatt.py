@@ -65,6 +65,8 @@ def collect_stats() -> dict:
     today = datetime.now(timezone.utc).date()
     totals = {"input": 0, "output": 0, "cache_create": 0, "cache_read": 0}
     today_totals = {"input": 0, "output": 0, "cache_create": 0, "cache_read": 0}
+    active_days: set = set()
+    first_day = None
 
     for path in _iter_jsonl_files():
         try:
@@ -83,6 +85,10 @@ def collect_stats() -> dict:
                             day = datetime.fromisoformat(ts.replace("Z", "+00:00")).date()
                         except ValueError:
                             continue
+                        if inp + out + cc + cr > 0:
+                            active_days.add(day)
+                            if first_day is None or day < first_day:
+                                first_day = day
                         if day == today:
                             today_totals["input"] += inp
                             today_totals["output"] += out
@@ -94,11 +100,25 @@ def collect_stats() -> dict:
     return {
         "today_wh": totals_to_wh(today_totals),
         "total_wh": totals_to_wh(totals),
+        "today_tokens": sum(today_totals.values()),
+        "total_tokens": sum(totals.values()),
+        "active_days": len(active_days),
+        "first_day": first_day,
     }
 
 
 def _item(text: str) -> rumps.MenuItem:
     return rumps.MenuItem(text, callback=None)
+
+
+def _fmt_tokens(n: int) -> str:
+    if n >= 1_000_000_000:
+        return f"{n/1_000_000_000:.2f}B"
+    if n >= 1_000_000:
+        return f"{n/1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n/1_000:.1f}k"
+    return f"{n:,}"
 
 
 class TokenWattApp(rumps.App):
@@ -127,10 +147,14 @@ class TokenWattApp(rumps.App):
         self.title = compact_title(stats["today_wh"]) if stats["today_wh"] > 0 else "🍟0  🚿0"
         self._rebuild_menu(stats)
 
-    def _block(self, label: str, wh: float) -> list:
+    def _block(self, label: str, wh: float, tokens: int, meta: str | None = None) -> list:
         litres = wh_to_litres(wh)
-        rows = [
-            _item(label),
+        rows: list = [_item(label)]
+        if meta:
+            rows.append(_item(f"   {meta}"))
+        rows += [
+            None,
+            _item(f"   🪙  {_fmt_tokens(tokens)} tokens"),
             None,
             _item(f"   ⚡  {fmt_wh(wh)}"),
         ]
@@ -145,44 +169,64 @@ class TokenWattApp(rumps.App):
     def _sources_submenu(self) -> rumps.MenuItem:
         root = rumps.MenuItem("📖  Sources & methodology")
 
-        def add(m: rumps.MenuItem, text: str) -> None:
-            m.add(_item(text))
+        def add(text: str) -> None:
+            root.add(_item(text))
 
-        add(root, "⚡  Electricity per token (Wh)")
-        add(root, f"      output              {WH_OUTPUT}")
-        add(root, f"      input               {WH_INPUT}")
-        add(root, f"      cache creation      {WH_CACHE_CREATE}")
-        add(root, f"      cache read          {WH_CACHE_READ}")
-        add(root, "      Calibrated to Claude Opus ≈ 4 Wh / 400 tokens.")
+        add("⚡  Electricity per token")
+        add(f"     output  ·  {WH_OUTPUT} Wh")
+        add(f"     input  ·  {WH_INPUT} Wh")
+        add(f"     cache creation  ·  {WH_CACHE_CREATE} Wh")
+        add(f"     cache read  ·  {WH_CACHE_READ} Wh")
+        add(f"     ≈ 4 Wh per Claude Opus 400-token round-trip")
         root.add(None)
 
-        add(root, "💧  Water per kWh")
-        add(root, f"      {L_WATER_PER_KWH} L   (datacenter WUE,")
-        add(root,  "            cooling + power generation)")
+        add("💧  Water per kWh")
+        add(f"     {L_WATER_PER_KWH} L  ·  datacenter WUE")
+        add( "     (cooling + power generation)")
         root.add(None)
 
-        add(root, "🏠  Everyday units")
+        add("🏠  Everyday references")
         for icon, singular, _, cost in ELECTRICITY:
-            add(root, f"      {icon}  {singular:<18} {cost} Wh")
+            add(f"     {icon}  {singular}  ·  {cost} Wh")
         for icon, singular, _, cost in WATER:
-            add(root, f"      {icon}  {singular:<18} {cost} L")
+            add(f"     {icon}  {singular}  ·  {cost} L")
         root.add(None)
 
-        add(root, "📚  References")
-        add(root, "      arXiv:2505.09598  How Hungry is AI?")
-        add(root, "      arXiv:2304.03271  Making AI Less Thirsty")
-        add(root, "      arXiv:2204.05149  Carbon footprint of ML")
-        add(root, "      IEA 2025          Energy and AI")
-        add(root, "      ADEME             household appliances / water")
-        add(root, "      EU Commission     energy label")
-        add(root, "      US DOE            Energy Star database")
+        add("📚  Papers & data")
+        add("     arXiv:2505.09598  ·  How Hungry is AI?")
+        add("     arXiv:2304.03271  ·  Making AI Less Thirsty")
+        add("     arXiv:2204.05149  ·  Carbon footprint of ML")
+        add("     IEA 2025  ·  Energy and AI")
+        add("     ADEME  ·  household appliances & water")
+        add("     EU Commission  ·  energy label")
+        add("     US DOE  ·  Energy Star database")
         return root
 
     def _rebuild_menu(self, stats: dict) -> None:
         self.menu.clear()
-        items: list = self._block("📅  Today", stats["today_wh"])
+        today_iso = datetime.now(timezone.utc).date().isoformat()
+        items: list = self._block(
+            "📅  Today",
+            stats["today_wh"],
+            stats["today_tokens"],
+            meta=today_iso,
+        )
         items.append(None)
-        items += self._block("📈  All time", stats["total_wh"])
+
+        first = stats["first_day"]
+        days = stats["active_days"]
+        if first and days:
+            meta = f"{days} active days  ·  since {first.isoformat()}"
+        elif days:
+            meta = f"{days} active days"
+        else:
+            meta = None
+        items += self._block(
+            "📈  All time",
+            stats["total_wh"],
+            stats["total_tokens"],
+            meta=meta,
+        )
         items += [
             None,
             self._sources_submenu(),
