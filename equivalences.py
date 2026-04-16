@@ -1,9 +1,12 @@
-"""Tokens -> electricity and water, compared to everyday objects.
+"""Tokens -> electricity and water, shown as everyday objects.
 
-Pick strategy:
-  - Prefer the biggest unit that gives a count >= 0.2
-  - "0.5 showers" beats "40 water bottles"
-  - Sub-unit counts render as pie circles: ◔ ◑ ◕ ●
+Four featured units per category. Each one always shown so the user
+sees the full scale at a glance:
+
+  Electricity: toast, airfryer, washing machine, induction meal
+  Water:       bottle, cooking pot, shower, bathtub
+
+Sub-unit counts render as camembert wedges: ◔ ¼ · ◑ ½ · ◕ ¾ · ● 1 full.
 
 All numbers are approximations. Full references in SOURCES.md.
 """
@@ -26,40 +29,26 @@ WH_INPUT = _env_float("TOKENWATT_WH_INPUT", 0.0003)
 WH_CACHE_CREATE = _env_float("TOKENWATT_WH_CACHE_CREATE", 0.0003)
 WH_CACHE_READ = _env_float("TOKENWATT_WH_CACHE_READ", 0.00003)
 
-# Litres of datacenter water per kWh (cooling + power-generation).
-# 1.8 L/kWh is the Shaolei Ren et al. "Making AI Less Thirsty" 2023 figure.
+# Litres of datacenter water per kWh — Ren et al., "Making AI Less
+# Thirsty", arXiv:2304.03271. 1.8 L/kWh is the US-average WUE figure.
 L_WATER_PER_KWH = _env_float("TOKENWATT_L_WATER_PER_KWH", 1.8)
 
 
-# (icon, label, cost per unit). Ordered small -> big.
+# Four fun, concrete electricity units shown on every refresh.
+#   (icon, singular label, plural label, Wh per use)
 ELECTRICITY = [
-    ("💡", "LED hour",         10),      # 10 W LED x 1 h
-    ("📱", "phone charge",     15),      # iPhone battery
-    ("💻", "MacBook hour",     30),      # charging load
-    ("🍞", "toast",            40),      # 1200 W x 2 min
-    ("☕", "kettle cup",       100),     # 250 mL to 90 C
-    ("🍲", "microwave (5 min)", 150),    # 1800 W x 5 min
-    ("🍟", "airfryer run",     500),     # 1500 W x 20 min
-    ("🧺", "washing cycle",    800),     # 40 C, class A
-    ("🧊", "fridge day",       800),     # class A fridge, 24 h
-    ("🍕", "pizza oven bake",  900),     # 200 C, 15 min
-    ("🔥", "induction meal",   1500),    # 30 min, 3 kW burner
-    ("🌡️", "home AC hour",     2000),   # split unit
-    ("🚗", "EV km",            180),     # avg EV ~180 Wh/km
+    ("🍞", "toast",           "toasts",           40),     # 1200 W × 2 min
+    ("🍟", "airfryer run",    "airfryer runs",    500),    # 1500 W × 20 min
+    ("🧺", "washing cycle",   "washing cycles",   800),    # 40°C, EU class A
+    ("🔥", "induction meal",  "induction meals",  1500),   # 3 kW × 30 min
 ]
 
+# Four fun, concrete water units.
 WATER = [
-    ("🥛", "glass of water",   0.25),    # 250 mL
-    ("🍶", "water bottle",     0.5),     # 500 mL
-    ("🧴", "shampoo wash",     5),       # hair wash rinse
-    ("🚽", "toilet flush",     6),       # standard dual-flush
-    ("🫖", "kettle fill",      1.7),     # full kettle
-    ("🧼", "hand wash",        2),       # 20 s with tap
-    ("🧑‍🍳", "cooking batch",  10),      # pasta + rinse
-    ("🚿", "shower (5 min)",   80),      # 16 L/min
-    ("🛁", "bathtub",          150),     # typical fill
-    ("🌳", "tree (daily)",     40),      # mature tree daily need
-    ("💦", "pool refill 1m³",  1000),    # 1 cubic metre
+    ("🍶", "water bottle",    "water bottles",    0.5),    # 500 mL
+    ("🍳", "cooking pot",     "cooking pots",     2),      # pasta pot
+    ("🚿", "shower",          "showers",          80),     # 5 min × 16 L/min
+    ("🛁", "bathtub",         "bathtubs",         150),    # typical fill
 ]
 
 
@@ -100,6 +89,8 @@ def fmt_litres(litres: float) -> str:
 
 
 def _fmt_count(n: float) -> str:
+    if n >= 10_000:
+        return f"{n:,.0f}"
     if n >= 100:
         return f"{n:,.0f}"
     if n >= 10:
@@ -110,7 +101,6 @@ def _fmt_count(n: float) -> str:
 
 
 def _fraction_word(count: float) -> str:
-    """0.25 -> 'a quarter of a', etc. Used when count < 1."""
     if count < 0.15:
         return "a tenth of a"
     if count < 0.4:
@@ -123,10 +113,8 @@ def _fraction_word(count: float) -> str:
 
 
 def pie(fraction: float) -> str:
-    """◔ ◑ ◕ ● — camembert wedges for fractional counts."""
-    if fraction <= 0:
-        return "○"
-    if fraction < 0.15:
+    """Camembert wedge for fractions. ○ ◔ ◑ ◕ ●"""
+    if fraction <= 0 or fraction < 0.15:
         return "○"
     if fraction < 0.4:
         return "◔"
@@ -137,49 +125,44 @@ def pie(fraction: float) -> str:
     return "●"
 
 
-def pick_best(value: float, units: list[tuple]) -> tuple[str, str, float, float]:
-    """Pick the biggest unit whose count is at least 0.2.
-
-    Falls back to the smallest unit if everything is too small,
-    or the biggest if everything is too big (then count will be huge).
-    """
-    ordered = sorted(units, key=lambda u: u[2])
-    for icon, label, cost in reversed(ordered):
-        count = value / cost
-        if count >= 0.2:
-            return icon, label, count, cost
-    icon, label, cost = ordered[0]
-    return icon, label, value / cost, cost
-
-
-def headline(value: float, units: list[tuple]) -> tuple[str, str]:
-    """Return (main line, visual line) for a quantity.
-
-    Examples:
-      21 L water  -> ('🚿 a quarter of a shower', '◔')
-      771 L water -> ('🛁 5 bathtubs',              '●●●●●')
-      0.02 kWh    -> ('💡 almost a full LED hour',  '◕')
-    """
-    icon, label, count, _cost = pick_best(value, units)
+def line(icon: str, singular: str, plural: str, count: float) -> str:
+    """Format one equivalent line."""
     if count < 1:
-        text = f"{icon}  {_fraction_word(count)} {label}"
-        visual = pie(count)
-    elif count < 10:
-        whole = int(count)
-        remainder = count - whole
-        plural = "" if count < 1.5 else "s"
-        text = f"{icon}  {_fmt_count(count)} {label}{plural}"
-        visual = "●" * whole
-        if remainder >= 0.15:
-            visual += pie(remainder)
-    else:
-        text = f"{icon}  {_fmt_count(count)} {label}s"
-        visual = "●" * 10 + f"  × {_fmt_count(count)}"
-    return text, visual
+        return f"{icon}  {_fraction_word(count)} {singular}  {pie(count)}"
+    label = singular if count < 1.5 else plural
+    return f"{icon}  {_fmt_count(count)} {label}"
+
+
+def electricity_lines(wh: float) -> list[str]:
+    return [line(icon, s, p, wh / cost) for icon, s, p, cost in ELECTRICITY]
+
+
+def water_lines(litres: float) -> list[str]:
+    return [line(icon, s, p, litres / cost) for icon, s, p, cost in WATER]
 
 
 def compact_title(wh: float) -> str:
-    """Menu-bar title: electricity icon+count, water icon+count."""
-    e_icon, _, e_count, _ = pick_best(wh, ELECTRICITY)
-    w_icon, _, w_count, _ = pick_best(wh_to_litres(wh), WATER)
-    return f"{e_icon}{_fmt_count(e_count)}  {w_icon}{_fmt_count(w_count)}"
+    """Menu-bar title: the most 'central' unit for each category.
+
+    Uses airfryer (elec) and shower (water) as default references.
+    Falls back to smaller units if the count would be near zero.
+    """
+    litres = wh_to_litres(wh)
+
+    # Electricity: airfryer if count >= 0.5, else toasts.
+    airfryer_count = wh / 500
+    if airfryer_count >= 0.5:
+        e_part = f"🍟{_fmt_count(airfryer_count)}"
+    else:
+        e_part = f"🍞{_fmt_count(wh / 40)}"
+
+    # Water: shower if count >= 0.2, else cooking pots, else bottles.
+    shower_count = litres / 80
+    if shower_count >= 0.2:
+        w_part = f"🚿{_fmt_count(shower_count)}"
+    elif litres / 2 >= 0.5:
+        w_part = f"🍳{_fmt_count(litres / 2)}"
+    else:
+        w_part = f"🍶{_fmt_count(litres / 0.5)}"
+
+    return f"{e_part}  {w_part}"

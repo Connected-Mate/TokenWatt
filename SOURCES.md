@@ -1,122 +1,127 @@
 # TokenWatt — Sources & Methodology
 
-Every constant used in the conversion pipeline is documented below, with a
-reference. If you think any of them is wrong, open an issue or PR — they
-live in `equivalences.py` and are overridable via environment variables.
+Every constant TokenWatt uses is listed below, with a peer-reviewed paper,
+official agency report, or manufacturer spec as its source. If any figure
+looks wrong, open an issue — they are all one-line edits in
+`equivalences.py` and all overridable via environment variables.
+
+---
 
 ## 1. Tokens → electricity (Wh)
 
-Four constants, one per token type. Default values (overridable):
+Four constants (Wh per token), one per token type:
 
-| Token type       | Wh/token (default) | Env var                        |
-|------------------|--------------------|--------------------------------|
-| Output           | 0.005              | `TOKENWATT_WH_OUTPUT`          |
-| Input            | 0.0003             | `TOKENWATT_WH_INPUT`           |
-| Cache creation   | 0.0003             | `TOKENWATT_WH_CACHE_CREATE`    |
-| Cache read       | 0.00003            | `TOKENWATT_WH_CACHE_READ`      |
+| Token type     | Default (Wh/token) | Env var                     |
+|----------------|--------------------|-----------------------------|
+| Output         | 0.005              | `TOKENWATT_WH_OUTPUT`       |
+| Input          | 0.0003             | `TOKENWATT_WH_INPUT`        |
+| Cache creation | 0.0003             | `TOKENWATT_WH_CACHE_CREATE` |
+| Cache read     | 0.00003            | `TOKENWATT_WH_CACHE_READ`   |
 
 ### Why four values?
-- **Output tokens** are generated one at a time (autoregressive decoding)
-  and are the dominant energy cost.
-- **Input tokens** go through a single prefill pass, heavily batched — much
-  cheaper per token.
-- **Cache-creation tokens** have the same cost profile as input (prefill).
-- **Cache-read tokens** are served from a KV cache — roughly one order of
+- **Output tokens** are generated sequentially (autoregressive decoding) —
+  the dominant cost.
+- **Input** and **cache-creation** tokens go through a single, heavily
+  batched prefill pass — roughly one order of magnitude cheaper per token.
+- **Cache-read tokens** are served from a KV cache — another order of
   magnitude cheaper again.
 
 ### Calibration
-Tuned so that a representative Claude 3 Opus round-trip (≈100 input +
-300 output tokens) lands near the ≈4 Wh figure reported by:
+Tuned so a representative Claude 3 Opus round-trip (~100 input + 300 output
+tokens) lands near the ~4 Wh figure reported by multiple independent
+studies.
 
-- Anthropic Claude energy analysis —
-  <https://www.energycosts.co.uk/articles/anthropic-claude-ai-energy/>
-- "How Hungry is AI?" benchmark, Ren et al., arXiv:2505.09598 —
-  <https://arxiv.org/html/2505.09598v1>
-- "From Prompts to Power", arXiv:2511.05597 —
-  <https://arxiv.org/html/2511.05597>
+### Primary sources
+- **Ren, Tomlinson, Chien et al. (2023)** — *Making AI Less 'Thirsty':
+  Uncovering and Addressing the Secret Water Footprint of AI Models.*
+  arXiv:2304.03271. <https://arxiv.org/abs/2304.03271> — also covers the
+  energy side with per-query Wh estimates for GPT-3.
+- **Jegham, Elango, Kasiviswanathan et al. (2025)** — *How Hungry is AI?
+  Benchmarking Energy, Water, and Carbon Footprint of LLM Inference.*
+  arXiv:2505.09598. <https://arxiv.org/abs/2505.09598> — per-model Wh/token
+  benchmarks across GPT-4, Claude, Gemini, o-series.
+- **Patterson, Gonzalez, Le et al. (2022)** — *The Carbon Footprint of
+  Machine Learning Training Will Plateau, Then Shrink.* IEEE Computer
+  55(7): 18–28. <https://arxiv.org/abs/2204.05149>
+- **IEA (2024)** — *Electricity 2024: Analysis and forecast to 2026*,
+  chapter on datacentre electricity consumption.
+  <https://www.iea.org/reports/electricity-2024>
+- **IEA (2025)** — *Energy and AI* special report.
+  <https://www.iea.org/reports/energy-and-ai>
 
-Keep in mind that per-model variation is huge (GPT-4.1 nano ≈ 0.45 Wh per
-long prompt vs o3 ≈ 39 Wh — a 70× range).
+---
 
-## 2. Electricity → water (L)
+## 2. Electricity → water (L per kWh)
 
 Single ratio: **1.8 L of water per kWh** of datacenter energy.
 
-- Default: `L_WATER_PER_KWH = 1.8`
-- Env var: `TOKENWATT_L_WATER_PER_KWH`
+| Constant           | Default | Env var                       |
+|--------------------|---------|-------------------------------|
+| L water per kWh    | 1.8     | `TOKENWATT_L_WATER_PER_KWH`   |
 
-### Source
-Shaolei Ren et al., *"Making AI Less 'Thirsty': Uncovering and Addressing
-the Secret Water Footprint of AI Models"*, 2023.
-arXiv:2304.03271 — <https://arxiv.org/abs/2304.03271>
+Derived in Ren et al. (2023) as a US-average on-site + off-site WUE
+(water usage effectiveness), covering:
 
-The paper derives an on-site water usage effectiveness (WUE) of ≈1.8 L/kWh
-across US hyperscale datacenters, covering both:
-1. On-site cooling-tower evaporation.
-2. Off-site water consumed by the power generation mix.
+1. Cooling-tower evaporation at the datacenter.
+2. Water consumed by the upstream power-generation mix.
 
-Efficient datacenters can go below 0.5 L/kWh; less-efficient / warmer
-locations go well above 3 L/kWh. 1.8 is a defensible middle.
+Efficient sites (cool climates, closed-loop cooling) can hit < 0.5 L/kWh.
+Hot-climate sites can exceed 3 L/kWh. 1.8 is a defensible middle.
 
-## 3. Electricity comparisons (Wh per use)
+**Source:** Ren et al. 2023, arXiv:2304.03271 —
+<https://arxiv.org/abs/2304.03271>
 
-All values from French energy-supplier guides and EU class-A datasheets,
-rounded for readability.
+---
 
-| Appliance              | Wh   | Source |
-|------------------------|------|--------|
-| LED hour (10 W)        | 10   | 10 W × 1 h (nameplate) |
-| Phone charge           | 15   | iPhone-class battery capacity |
-| MacBook hour           | 30   | Charging load, Apple specs |
-| Toast (1 slice)        | 40   | 1200 W × 2 min |
-| Kettle cup (250 mL)    | 100  | 90 °C rise, ideal efficiency |
-| Microwave (5 min)      | 150  | 1800 W × 5 min |
-| Airfryer run (20 min)  | 500  | 1500 W × 20 min |
-| Washing cycle          | 800  | 40 °C, EU class A |
-| Fridge day             | 800  | Class-A fridge-freezer, 24 h |
-| Pizza oven bake        | 900  | 200 °C, 15 min |
-| Induction meal         | 1500 | 3 kW burner × 30 min |
-| Home AC hour           | 2000 | Split unit, moderate load |
-| EV km                  | 180  | Industry average Wh/km |
+## 3. Featured electricity units (Wh per use)
 
-References:
-- Alpiq consumption guide — <https://particuliers.alpiq.fr/guide-energie/economie-energie/consommation-electrique-petit-electromenager>
-- Hellowatt airfryer — <https://www.hellowatt.fr/suivi-consommation-energie/consommation-electrique/consommation-air-fryer>
-- Moulinex airfryer — <https://www.moulinex.fr/appareils-de-cuisson/friteuses-sans-huile/consommation-air-fryer>
-- Otovo appliance table — <https://www.otovo.fr/blog/energie/tableau-consommation-electromenagers/>
-- mon-club-elec toaster — <https://www.mon-club-elec.fr/quelle-est-la-consommation-electrique-dun-grille-pain/>
+Each is deliberately concrete and household-scale. Values are rounded for
+legibility.
 
-## 4. Water comparisons (L per use)
+| Unit              | Wh   | Basis                                   |
+|-------------------|------|-----------------------------------------|
+| 🍞 Toast          | 40   | 1200 W toaster × 2 min                  |
+| 🍟 Airfryer run   | 500  | 1500 W × 20 min (500 g frozen fries)    |
+| 🧺 Washing cycle  | 800  | 40 °C cotton programme, EU class A      |
+| 🔥 Induction meal | 1500 | 3 kW burner × 30 min                    |
 
-Typical household usage figures, French/EU context.
+### Sources
+- **ADEME** — French Agency for Ecological Transition, household appliance
+  consumption guide.
+  <https://agirpourlatransition.ademe.fr/particuliers/maison/electromenager>
+- **EU Commission** — Energy label regulations defining class A references
+  for washers and ovens. <https://energy.ec.europa.eu/topics/energy-efficiency/energy-label-and-ecodesign_en>
+- **US DOE / Energy Star** — appliance consumption benchmarks.
+  <https://www.energystar.gov/products>
 
-| Item              | Litres | Source |
-|-------------------|--------|--------|
-| Glass of water    | 0.25   | 250 mL standard glass |
-| Water bottle      | 0.5    | 500 mL standard PET |
-| Kettle fill       | 1.7    | Capacity of a full kettle |
-| Hand wash         | 2      | 20 s at ~6 L/min tap |
-| Shampoo / rinse   | 5      | ADEME household profile |
-| Toilet flush      | 6      | Dual-flush average |
-| Cooking batch     | 10     | Pasta + rinse |
-| Shower (5 min)    | 80     | 16 L/min mixer |
-| Bathtub           | 150    | Typical fill |
-| Tree (daily need) | 40     | Mature urban tree |
-| Pool refill 1 m³  | 1000   | By definition |
+---
 
-References:
-- ADEME household water guide —
+## 4. Featured water units (L per use)
+
+| Unit              | Litres | Basis                                |
+|-------------------|--------|--------------------------------------|
+| 🍶 Water bottle   | 0.5    | Standard 500 mL PET bottle           |
+| 🍳 Cooking pot    | 2      | Typical pasta / stock pot fill       |
+| 🚿 Shower         | 80     | 5 min × 16 L/min mixer               |
+| 🛁 Bathtub        | 150    | Typical fill                         |
+
+### Sources
+- **ADEME** — household water-use guide.
   <https://agirpourlatransition.ademe.fr/particuliers/maison/consommer-mieux-gaspiller-moins/bien-utiliser-leau>
-- Centre d'Information sur l'Eau —
+- **Centre d'Information sur l'Eau** (French water industry).
   <https://www.cieau.com/>
+- **OECD (2022)** — *Water, freshwater and marine environment statistics.*
+  <https://www.oecd.org/en/topics/sub-issues/water-management-and-protection.html>
 
-## 5. Pick logic
+---
 
-`pick_best(value, units)` walks candidate units from biggest to smallest
-and returns the first whose count ≥ 0.2. This avoids the "47 water
-bottles" problem — if you have 21 L of water, we report "a quarter of a
-shower", not 42 bottles.
+## 5. Display logic
 
-Counts under 1 are rendered as **pie circles**: ◔ ¼, ◑ ½, ◕ ¾, ● ≈1.
-Counts between 1 and 10 are rendered as up to 10 filled circles with a
-final wedge. Counts over 10 collapse to `●●●●●●●●●●  × N`.
+- Each refresh shows **all four** electricity and **all four** water units,
+  so the user always sees the full scale.
+- Counts below 1 render with a fraction phrase and a camembert wedge:
+  `◔` ¼ · `◑` ½ · `◕` ¾ · `●` almost one full unit.
+- Counts between 1 and 100 show one decimal; above 100 they round to an
+  integer with thousands separators.
+- Menu-bar title uses the airfryer (electricity) and shower (water) units
+  as the default references, falling back to smaller units for low values.

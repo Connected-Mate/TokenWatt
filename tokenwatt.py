@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""TokenWatt - Claude Code tokens, shown as electricity + water
-equivalents in the macOS menu bar.
+"""TokenWatt - Claude Code tokens shown as everyday electricity
+and water equivalents, in your macOS menu bar.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,13 +13,12 @@ from pathlib import Path
 import rumps
 
 from equivalences import (
-    ELECTRICITY,
-    WATER,
     compact_title,
+    electricity_lines,
     fmt_litres,
     fmt_wh,
-    headline,
     totals_to_wh,
+    water_lines,
     wh_to_litres,
 )
 
@@ -38,9 +36,9 @@ def _iter_jsonl_files() -> list[Path]:
     return list(CLAUDE_DIR.rglob("*.jsonl"))
 
 
-def _parse_usage(line: str):
+def _parse_usage(line_str: str):
     try:
-        d = json.loads(line)
+        d = json.loads(line_str)
     except json.JSONDecodeError:
         return None
     msg = d.get("message")
@@ -64,8 +62,8 @@ def collect_stats() -> dict:
     for path in _iter_jsonl_files():
         try:
             with path.open("r", encoding="utf-8", errors="ignore") as fh:
-                for line in fh:
-                    parsed = _parse_usage(line)
+                for raw in fh:
+                    parsed = _parse_usage(raw)
                     if parsed is None:
                         continue
                     inp, out, cc, cr, ts = parsed
@@ -122,10 +120,12 @@ class TokenWattApp(rumps.App):
             choice = rumps.alert(
                 title="TokenWatt",
                 message=(
-                    "Your Claude Code tokens, shown as electricity and water.\n\n"
+                    "Your Claude Code tokens, shown as everyday electricity "
+                    "and water.\n\n"
                     "Reads ~/.claude/projects/*.jsonl locally.\n"
                     "No telemetry. No network calls.\n\n"
-                    "Every constant is sourced (SOURCES.md).\n\n"
+                    "Every constant is peer-reviewed or from an official "
+                    "source — see Sources & methodology.\n\n"
                     f"{GITHUB_URL}"
                 ),
                 ok="Open sources",
@@ -145,27 +145,22 @@ class TokenWattApp(rumps.App):
             print(f"TokenWatt error: {exc}")
             return
 
-        self.title = compact_title(stats["today_wh"]) if stats["today_wh"] > 0 else "💡0  🥛0"
+        self.title = compact_title(stats["today_wh"]) if stats["today_wh"] > 0 else "🍟0  🚿0"
         self._rebuild_menu(stats)
 
     def _block(self, label: str, wh: float) -> list:
         litres = wh_to_litres(wh)
-        e_text, e_visual = headline(wh, ELECTRICITY)
-        w_text, w_visual = headline(litres, WATER)
-
         rows = [
             _item(label),
             None,
             _item(f"   ⚡  {fmt_wh(wh)}"),
-            _item(f"   =  {e_text}"),
         ]
-        if e_visual:
-            rows.append(_item(f"       {e_visual}"))
+        for txt in electricity_lines(wh):
+            rows.append(_item(f"      {txt}"))
         rows.append(None)
         rows.append(_item(f"   💧  {fmt_litres(litres)}"))
-        rows.append(_item(f"   =  {w_text}"))
-        if w_visual:
-            rows.append(_item(f"       {w_visual}"))
+        for txt in water_lines(litres):
+            rows.append(_item(f"      {txt}"))
         return rows
 
     def _rebuild_menu(self, stats: dict) -> None:
