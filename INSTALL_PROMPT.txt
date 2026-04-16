@@ -1,0 +1,16 @@
+Copy-paste this into Claude Code (any directory) to install TokenWatt:
+
+---
+
+Clone https://github.com/Connected-Mate/TokenWatt into ~/Documents/TokenWatt
+(or git pull if the directory already exists), then run ./run.sh in the
+background so the TokenWatt icon appears in my macOS menu bar.
+
+Requirements: macOS, Python 3.10 or newer. The script creates its own .venv
+and installs the `rumps` dependency on first run — nothing to install
+manually.
+
+When done, confirm the menu-bar icon is visible (labelled "TW ...") and
+report the today/total token and Wh summary it displays.
+
+---

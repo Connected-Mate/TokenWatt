@@ -37,6 +37,20 @@ and launches the menu-bar icon (`TW ...`). Click it to see the breakdown.
 To launch at login, add `run.sh` as a Login Item in **System Settings >
 General > Login Items**.
 
+### Install via Claude Code (one-shot prompt)
+
+Open Claude Code in any directory and paste this:
+
+> Clone https://github.com/Connected-Mate/TokenWatt into `~/Documents/TokenWatt`
+> (or `git pull` if it already exists), then run `./run.sh` in the
+> background so the TokenWatt icon appears in my macOS menu bar.
+> Python 3.10+ must be available. The script creates its own `.venv` and
+> installs `rumps` on first run. Confirm the menu-bar icon is visible and
+> report the token/Wh summary it shows.
+
+Claude Code will handle the clone, venv bootstrap, and launch without any
+further input.
+
 ## What it reads
 
 TokenWatt walks `~/.claude/projects/**/*.jsonl` — the transcript files that
